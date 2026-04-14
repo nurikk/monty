@@ -14,7 +14,7 @@ use pyo3::{
     sync::PyOnceLock,
     types::{
         PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyDict, PyFloat, PyFrozenSet, PyInt,
-        PyList, PyModule, PySet, PyString, PyTimeAccess, PyTuple, PyTzInfo, PyTzInfoAccess,
+        PyList, PyModule, PySet, PyString, PyTime, PyTimeAccess, PyTuple, PyTzInfo, PyTzInfoAccess,
     },
 };
 
@@ -114,6 +114,19 @@ pub fn py_to_monty(obj: &Bound<'_, PyAny>, dc_registry: &DcRegistry) -> PyResult
             month: date.get_month(),
             day: date.get_day(),
         }))
+    } else if let Ok(time) = obj.cast::<PyTime>() {
+        // Phase 1: no dedicated `MontyObject::Time` variant yet (see
+        // `object.rs` — the internal path falls back to a repr placeholder).
+        // Surface a string so pydantic tool returns that carry `datetime.time`
+        // fields don't blow up the conversion on the way into the sandbox.
+        let iso = format!(
+            "{:02}:{:02}:{:02}.{:06}",
+            time.get_hour(),
+            time.get_minute(),
+            time.get_second(),
+            time.get_microsecond(),
+        );
+        Ok(MontyObject::String(iso))
     } else if let Ok(delta) = obj.cast::<PyDelta>() {
         Ok(MontyObject::TimeDelta(py_timedelta_to_monty(delta)))
     } else if obj.is_instance(get_datetime_timezone_type(obj.py())?)? {
