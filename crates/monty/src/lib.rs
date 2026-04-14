@@ -38,7 +38,7 @@ pub use crate::{
     exception_public::{CodeLoc, MontyException, StackFrame},
     io::{PrintStream, PrintWriter, PrintWriterCallback},
     object::{DictPairs, InvalidInputError, MontyDate, MontyDateTime, MontyObject, MontyTimeDelta, MontyTimeZone},
-    os::{OsFunction, dir_stat, file_stat, stat_result, symlink_stat},
+    os::{OsFunction, dir_stat, file_stat, host_date_today, host_datetime_now, stat_result, symlink_stat},
     repl::{
         MontyRepl, ReplContinuationMode, ReplFunctionCall, ReplNameLookup, ReplOsCall, ReplProgress,
         ReplResolveFutures, ReplStartError, detect_repl_continuation_mode,

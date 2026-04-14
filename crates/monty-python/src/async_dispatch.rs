@@ -12,7 +12,7 @@ use std::mem::drop;
 
 use monty::{
     ExcType, ExtFunctionResult, MontyException, MontyObject, MontyRepl, NameLookupResult, OsFunction, ReplProgress,
-    ReplStartError, ResourceTracker, RunProgress,
+    ReplStartError, ResourceTracker, RunProgress, host_date_today, host_datetime_now,
 };
 use pyo3::{
     exceptions::PyRuntimeError,
@@ -341,6 +341,18 @@ fn dispatch_os_call_py(
     os: Option<&Py<PyAny>>,
     dc_registry: &DcRegistry,
 ) -> ExtFunctionResult {
+    // Host-clock OS calls are resolved natively regardless of whether a Python OS
+    // callback is wired up, mirroring `Executor::run_to_completion` in the core
+    // crate. This keeps `datetime.now()` / `date.today()` working in the async
+    // dispatch path used by `Monty.run_async` and `MontyRepl.feed_run_async`.
+    if matches!(function, OsFunction::DateTimeNow | OsFunction::DateToday) {
+        return match function {
+            OsFunction::DateTimeNow => host_datetime_now(args.first().unwrap_or(&MontyObject::None)).into(),
+            OsFunction::DateToday => host_date_today().into(),
+            _ => unreachable!("outer guard restricts to clock OS calls"),
+        };
+    }
+
     Python::attach(|py| {
         let Some(os_callback) = os else {
             return MontyException::new(

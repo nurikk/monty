@@ -7,8 +7,8 @@ use std::{
 // Use `::monty` to refer to the external crate (not the pymodule)
 use ::monty::{
     ExtFunctionResult, FunctionCall, LimitedTracker, MontyObject, MontyRun, NameLookupResult, NoLimitTracker, OsCall,
-    ReplFunctionCall, ReplNameLookup, ReplOsCall, ReplProgress, ReplResolveFutures, ReplStartError, ResolveFutures,
-    ResourceTracker, RunProgress,
+    OsFunction, ReplFunctionCall, ReplNameLookup, ReplOsCall, ReplProgress, ReplResolveFutures, ReplStartError,
+    ResolveFutures, ResourceTracker, RunProgress, host_date_today, host_datetime_now,
 };
 use monty::{NameLookup, fs::MountTable};
 use monty_type_checking::{SourceFile, type_check};
@@ -597,6 +597,70 @@ impl EitherProgress {
     }
 }
 
+/// Returns the `MontyObject` result for a host-clock OS call, or `None` if `function`
+/// is not a clock call.
+///
+/// Mirrors the fallback in [`monty::run::Executor::run_to_completion`]: callers driving
+/// `Monty.start` / `MontyRepl.feed_start` should get clock data for free without having
+/// to wire up a Python `os=` callback.
+fn host_clock_result(function: OsFunction, args: &[MontyObject]) -> Option<MontyObject> {
+    match function {
+        OsFunction::DateTimeNow => Some(host_datetime_now(args.first().unwrap_or(&MontyObject::None))),
+        OsFunction::DateToday => Some(host_date_today()),
+        _ => None,
+    }
+}
+
+/// Auto-resume host-clock OS calls emitted from `Monty.start` / `Monty.run` before
+/// yielding a snapshot to Python.
+fn auto_resume_host_clock_run<T: ResourceTracker>(
+    py: Python<'_>,
+    mut progress: RunProgress<T>,
+    print_callback: &PrintTarget,
+) -> PyResult<RunProgress<T>> {
+    loop {
+        progress = match progress {
+            RunProgress::OsCall(call) => {
+                let Some(result) = host_clock_result(call.function, &call.args) else {
+                    return Ok(RunProgress::OsCall(call));
+                };
+                print_callback
+                    .with_writer(|w| call.resume(ExtFunctionResult::from(result), w))
+                    .map_err(|e| MontyError::new_err(py, e))?
+            }
+            other => return Ok(other),
+        };
+    }
+}
+
+/// REPL counterpart to [`auto_resume_host_clock_run`].
+///
+/// On error, restores the REPL into `repl_owner` so the session remains usable —
+/// `ReplOsCall::resume` returns `Box<ReplStartError<T>>` which carries the preserved REPL.
+fn auto_resume_host_clock_repl<T: ResourceTracker>(
+    py: Python<'_>,
+    mut progress: ReplProgress<T>,
+    print_callback: &PrintTarget,
+    repl_owner: &Py<PyMontyRepl>,
+) -> PyResult<ReplProgress<T>>
+where
+    EitherRepl: FromCoreRepl<T>,
+{
+    loop {
+        progress = match progress {
+            ReplProgress::OsCall(call) => {
+                let Some(result) = host_clock_result(call.function, &call.args) else {
+                    return Ok(ReplProgress::OsCall(call));
+                };
+                print_callback
+                    .with_writer(|w| call.resume(ExtFunctionResult::from(result), w))
+                    .map_err(|e| restore_repl_from_repl_start_error(py, repl_owner, *e))?
+            }
+            other => return Ok(other),
+        };
+    }
+}
+
 /// Converts a `RunProgress<T>` into the appropriate Python snapshot type.
 fn run_progress_to_py<T: ResourceTracker>(
     py: Python<'_>,
@@ -610,6 +674,7 @@ where
     EitherLookupSnapshot: FromNameLookup<T>,
     EitherFutureSnapshot: FromResolveFutures<T>,
 {
+    let progress = auto_resume_host_clock_run(py, progress, &print_callback)?;
     match progress {
         RunProgress::Complete(result) => PyMontyComplete::create(py, &result, &dc_registry),
         RunProgress::FunctionCall(call) => {
@@ -643,6 +708,7 @@ where
     EitherFutureSnapshot: FromReplResolveFutures<T>,
     EitherRepl: FromCoreRepl<T>,
 {
+    let progress = auto_resume_host_clock_repl(py, progress, &print_callback, &repl_owner)?;
     match progress {
         ReplProgress::Complete { repl, value } => {
             repl_owner.get().put_repl_after_commit(EitherRepl::from_core(repl));

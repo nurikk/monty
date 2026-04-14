@@ -308,7 +308,7 @@ pub fn stat_result(
 /// Used by `date.today()` in standard execution. Mirrors the CPython semantics
 /// of returning the local civil date (not UTC).
 #[must_use]
-pub(crate) fn host_date_today() -> MontyObject {
+pub fn host_date_today() -> MontyObject {
     let local = Local::now().naive_local();
     MontyObject::Date(MontyDate {
         year: local.year(),
@@ -329,7 +329,7 @@ pub(crate) fn host_date_today() -> MontyObject {
 /// Any other `tz` variant is treated like `None`; callers in the VM have
 /// already validated the argument, so this is a defensive fallback.
 #[must_use]
-pub(crate) fn host_datetime_now(tz: &MontyObject) -> MontyObject {
+pub fn host_datetime_now(tz: &MontyObject) -> MontyObject {
     // For aware tz, compute local civil components by shifting the real UTC
     // instant by the fixed offset, and preserve the caller's offset/name so
     // `datetime.tzinfo` stays equal to the supplied tz. For naive/None, fall
